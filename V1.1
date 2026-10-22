@@ -1,0 +1,188 @@
+# ============================================================
+# Balanço de carbono – ANOVA por tratamento (kg C ha-1 ciclo-1)
+# Dados: aba BALANÇO (linhas 48–59), 12 viveiros, n = 3 por tratamento
+# TP = tilápia+camarão | TM = tilápia mono | TC = tilápia+curimbatá
+# TPC = tilápia+camarão+curimbatá
+# ============================================================
+
+# Pacotes (instale uma vez: install.packages(c("car","dplyr","tidyr")))
+library(car)    # leveneTest
+library(dplyr)
+library(tidyr)
+
+dados <- read.table(header = TRUE, text = "
+viveiro trat racao agua_ent est_til est_cur est_cam til cur cam sedimento gases agua_sai
+7  TP  11581.32 130.92 8.42  0.00 0.23 1290.43   0.00 142.08 2167.33   813.23 177.36
+8  TPC 11416.12 127.24 8.41 73.30 0.23 1146.68 199.94 120.34 1790.91  -360.20 154.39
+9  TM  11530.44  95.77 8.41  0.00 0.00 1303.72   0.00   0.00 2044.75   184.30 240.03
+10 TPC 10864.02 109.10 8.41 73.30 0.23 1051.03 129.13  34.45 1632.23  1329.18 153.61
+11 TP  11238.89  85.79 8.41  0.00 0.23 1366.26   0.00 101.04 2042.31   960.19 128.80
+12 TPC 11314.46  61.95 8.41 73.30 0.23 1121.52 126.77  77.53 1508.59  -115.99  79.37
+13 TM  10674.66  65.80 8.41  0.00 0.00 1404.22   0.00   0.00 1866.08   -78.07 145.47
+14 TC  10211.89  56.92 8.41 73.30 0.00  921.63 160.99   0.00 2079.23   115.27 117.87
+15 TC  10272.62  37.95 8.42 73.30 0.00 1054.96  98.14   0.00 1780.10  1869.58  69.55
+16 TP  11489.61 104.72 8.42  0.00 0.23 1236.61   0.00  26.93 1530.16   448.25 163.88
+17 TC  10762.97  69.19 8.42 73.30 0.00 1458.71 134.83   0.00 1601.24  1014.82 140.89
+18 TM  12690.11  84.77 8.42  0.00 0.00 1241.68   0.00   0.00 1464.72  1079.65  56.18
+")
+
+dados$trat <- factor(dados$trat, levels = c("TP", "TM", "TC", "TPC"))
+
+# ---- Variáveis derivadas ----
+dados <- dados %>%
+  mutate(
+    entradas      = racao + agua_ent + est_til + est_cur + est_cam,
+    biomassa      = til + cur + cam,
+    saidas        = biomassa + sedimento + gases + agua_sai,
+    entrada_saida = entradas - saidas,
+    recuperacao   = saidas / entradas * 100,
+    nao_contab    = 100 - recuperacao,
+    ganho_liq     = biomassa - (est_til + est_cur + est_cam),
+    retencao      = ganho_liq / racao * 100
+  )
+
+vars <- c(racao = "Ração", agua_ent = "Água de entrada",
+          biomassa = "Biomassa despescada", til = "Tilápia despescada",
+          sedimento = "Sedimento", gases = "Gases (líquido)",
+          agua_sai = "Água de saída", entradas = "Total de entradas",
+          nao_contab = "Não contabilizado (%)", entrada_saida = "Entrada − Saída",
+          ganho_liq = "Ganho líquido biomassa", retencao = "Retenção da ração (%)")
+
+# ---- Tabela-resumo: ANOVA + pressupostos + testes alternativos ----
+resultado <- lapply(names(vars), function(v) {
+  f   <- as.formula(paste(v, "~ trat"))
+  m   <- aov(f, data = dados)
+  a   <- summary(m)[[1]]
+  sw  <- shapiro.test(residuals(m))
+  lev <- leveneTest(f, data = dados, center = mean)
+  kw  <- kruskal.test(f, data = dados)
+  wel <- oneway.test(f, data = dados, var.equal = FALSE)
+  med <- tapply(dados[[v]], dados$trat, mean)
+  data.frame(
+    Variavel   = vars[[v]],
+    TP = round(med["TP"], 2), TM = round(med["TM"], 2),
+    TC = round(med["TC"], 2), TPC = round(med["TPC"], 2),
+    F          = round(a$`F value`[1], 3),
+    p_ANOVA    = round(a$`Pr(>F)`[1], 4),
+    W_Shapiro  = round(sw$statistic, 4),
+    p_Shapiro  = round(sw$p.value, 4),
+    p_Levene   = round(lev$`Pr(>F)`[1], 4),
+    p_Welch    = round(wel$p.value, 4),
+    p_Kruskal  = round(kw$p.value, 4),
+    row.names  = NULL
+  )
+})
+tabela <- do.call(rbind, resultado)
+print(tabela, row.names = FALSE)
+
+# ---- Tukey HSD: tilápia despescada ----
+m_til <- aov(til ~ trat, data = dados)
+print(TukeyHSD(m_til, conf.level = 0.95))
+
+# ---- Média ± desvio-padrão por tratamento (formato das tabelas) ----
+resumo <- dados %>%
+  select(trat, all_of(names(vars))) %>%
+  pivot_longer(-trat, names_to = "variavel") %>%
+  group_by(variavel, trat) %>%
+  summarise(media = mean(value), dp = sd(value), .groups = "drop") %>%
+  mutate(texto = sprintf("%.1f ± %.1f", media, dp)) %>%
+  select(variavel, trat, texto) %>%
+  pivot_wider(names_from = trat, values_from = texto)
+print(resumo, n = Inf)
+
+# ---- Exportar (opcional) ----
+# write.csv2(tabela, "anova_balanco_carbono.csv", row.names = FALSE)
+# ============================================================
+# Gráficos e quartis – continuação (requer o objeto 'dados')
+# install.packages(c("ggplot2","patchwork"))
+# ============================================================
+library(ggplot2)
+library(patchwork)
+
+cores <- c(TP = "#1f77b4", TM = "#ff7f0e", TC = "#2ca02c", TPC = "#9467bd")
+tema  <- theme_bw(base_size = 12) +
+  theme(legend.position = "none", panel.grid.minor = element_blank())
+
+# ---- 1. Tabela de quartis por tratamento ----
+quartis <- dados %>%
+  select(trat, all_of(names(vars))) %>%
+  pivot_longer(-trat, names_to = "variavel") %>%
+  group_by(variavel, trat) %>%
+  summarise(Min = min(value), Q1 = quantile(value, 0.25),
+            Mediana = median(value), Q3 = quantile(value, 0.75),
+            Max = max(value), IIQ = IQR(value), .groups = "drop") %>%
+  mutate(across(Min:IIQ, ~ round(.x, 2)),
+         variavel = vars[variavel])
+print(quartis, n = Inf)
+# write.csv2(quartis, "quartis_balanco_carbono.csv", row.names = FALSE)
+
+# ---- 2. Boxplots (quartis) + pontos dos viveiros (dispersão) ----
+box_var <- function(v, titulo, ylab = "kg C ha-1") {
+  p_val <- tabela$p_ANOVA[tabela$Variavel == vars[[v]]]
+  ggplot(dados, aes(trat, .data[[v]], fill = trat)) +
+    geom_boxplot(alpha = 0.35, width = 0.6, outlier.shape = NA) +
+    geom_jitter(aes(color = trat), width = 0.08, size = 2.8) +
+    stat_summary(fun = mean, geom = "point", shape = 4, size = 3.5, stroke = 1.2) +
+    scale_fill_manual(values = cores) + scale_color_manual(values = cores) +
+    labs(title = titulo, subtitle = sprintf("ANOVA p = %.3f", p_val),
+         x = NULL, y = ylab) + tema
+}
+
+g_box <- box_var("racao", "Ração") +
+  box_var("biomassa", "Biomassa despescada") +
+  box_var("til", "Tilápia despescada") +
+  box_var("sedimento", "Sedimento") +
+  box_var("gases", "Gases (líquido)") +
+  box_var("agua_sai", "Água de saída") +
+  box_var("nao_contab", "Não contabilizado", "% das entradas") +
+  box_var("retencao", "Retenção da ração", "%") +
+  plot_layout(ncol = 4)
+print(g_box)
+ggsave("boxplots_balanco.png", g_box, width = 16, height = 8, dpi = 300)
+
+# ---- 3. Gráficos de dispersão (relações entre componentes) ----
+disp <- function(x, y, xl, yl) {
+  ct <- cor.test(dados[[x]], dados[[y]])
+  ggplot(dados, aes(.data[[x]], .data[[y]])) +
+    geom_smooth(method = "lm", se = TRUE, color = "grey40", linewidth = 0.7) +
+    geom_point(aes(color = trat), size = 3) +
+    geom_text(aes(label = paste0("V", viveiro)), vjust = -0.9, size = 3) +
+    scale_color_manual(values = cores, name = "Tratamento") +
+    labs(x = xl, y = yl,
+         subtitle = sprintf("r = %.2f; p = %.3f", ct$estimate, ct$p.value)) +
+    theme_bw(base_size = 12)
+}
+
+g_disp <- disp("gases", "nao_contab", "Gases (kg C ha-1)", "Não contabilizado (%)") +
+  disp("racao", "biomassa", "C ração (kg C ha-1)", "Biomassa despescada (kg C ha-1)") +
+  disp("sedimento", "nao_contab", "Sedimento (kg C ha-1)", "Não contabilizado (%)") +
+  disp("racao", "sedimento", "C ração (kg C ha-1)", "Sedimento (kg C ha-1)") +
+  plot_layout(ncol = 2, guides = "collect")
+print(g_disp)
+ggsave("dispersao_balanco.png", g_disp, width = 12, height = 9, dpi = 300)
+
+# ---- 4. Destino do carbono (% das entradas) por tratamento ----
+destino <- dados %>%
+  mutate(Biomassa = biomassa / entradas * 100,
+         Sedimento = sedimento / entradas * 100,
+         Gases = gases / entradas * 100,
+         `Água de saída` = agua_sai / entradas * 100,
+         `Não contabilizado` = nao_contab) %>%
+  select(trat, Biomassa:`Não contabilizado`) %>%
+  pivot_longer(-trat, names_to = "Compartimento") %>%
+  group_by(trat, Compartimento) %>%
+  summarise(pct = mean(value), .groups = "drop") %>%
+  mutate(Compartimento = factor(Compartimento,
+                                levels = c("Não contabilizado", "Água de saída", "Gases",
+                                           "Sedimento", "Biomassa")))
+
+g_dest <- ggplot(destino, aes(trat, pct, fill = Compartimento)) +
+  geom_col(width = 0.65, color = "white") +
+  geom_text(aes(label = sprintf("%.1f%%", pct)),
+            position = position_stack(vjust = 0.5), size = 3.3) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = NULL, y = "% das entradas de carbono",
+       title = "Destino do carbono por tratamento") +
+  theme_bw(base_size = 12)
+print(g_dest)
+ggsave("destino_carbono.png", g_dest, width = 8, height = 6, dpi = 300)
