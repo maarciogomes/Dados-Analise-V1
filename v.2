@@ -1,0 +1,153 @@
+# ============================================================
+# ANOVA de um fator + Tukey HSD – Balanço de carbono
+# kg C ha-1 ciclo-1 | n = 3 viveiros por tratamento
+# ============================================================
+pacotes <- c("ggplot2", "dplyr", "tidyr", "agricolae", "car")
+novos <- pacotes[!pacotes %in% installed.packages()[, "Package"]]
+if (length(novos)) install.packages(novos)
+invisible(lapply(pacotes, library, character.only = TRUE))
+
+# ---------------- Dados (aba ANOVA, linhas 5–16) ----------------
+dados <- data.frame(
+  Tratamento = factor(rep(c("TP", "MT", "TC", "TCP"), each = 3),
+                      levels = c("TP", "MT", "TC", "TCP")),
+  Viveiro = c(7, 11, 16, 9, 13, 18, 14, 15, 17, 8, 10, 12),
+  Racao          = c(11581.32, 11238.89, 11489.61, 11530.44, 10674.66, 12690.11,
+                     10211.89, 10272.62, 10762.97, 11416.11, 10864.02, 11314.46),
+  Agua_entrada   = c(130.92, 85.79, 104.72, 95.77, 65.80, 84.77,
+                     56.92, 37.95, 69.19, 127.24, 109.10, 61.95),
+  Biomassa_desp  = c(6271.06, 6538.32, 5124.98, 5343.12, 5279.02, 5669.79,
+                     4627.15, 4314.50, 5792.49, 5924.19, 5121.23, 5220.81),
+  Sedimento      = c(2167.33, 2042.31, 1530.16, 2044.75, 1866.08, 1464.72,
+                     2079.23, 1780.10, 1601.24, 1790.91, 1632.23, 1508.59),
+  Gases_liquido  = c(813.23, 960.19, 448.25, 184.30, -78.07, 1079.65,
+                     115.27, 1869.58, 1014.82, -360.20, 1329.18, -115.99),
+  Agua_saida     = c(177.36, 128.80, 163.88, 240.03, 145.47, 56.18,
+                     117.87, 69.55, 140.89, 154.39, 153.61, 79.37),
+  Nao_contab_pct = c(19.77, 14.92, 37.54, 33.03, 33.09, 35.46,
+                     34.78, 24.79, 23.69, 36.98, 27.40, 43.03),
+  Entrada_Saida  = c(2323.48, 1695.22, 4367.28, 3853.50, 3567.44, 4544.05,
+                     3700.48, 2648.06, 2653.95, 4405.93, 3108.73, 5055.48),
+  Tilapia_desp   = c(5812.75, 6210.27, 5047.38, 5343.12, 5279.02, 5669.79,
+                     3905.22, 3864.31, 5228.34, 4777.84, 4472.46, 4486.07),
+  Total_entradas = c(11752.46, 11364.85, 11634.54, 11665.70, 10779.92, 12814.39,
+                     10640.00, 10681.79, 11203.38, 11915.22, 11344.98, 11748.26),
+  Ganho_liquido  = c(6230.84, 6498.15, 5084.76, 5303.63, 5239.55, 5630.28,
+                     4255.96, 3943.27, 5421.27, 5552.32, 4749.37, 4848.96),
+  Retencao_pct   = c(53.80, 57.82, 44.26, 46.00, 49.08, 44.37,
+                     41.68, 38.39, 50.37, 48.64, 43.72, 42.86)
+)
+
+rotulos <- c(
+  Racao = "Ração", Agua_entrada = "Água de entrada",
+  Biomassa_desp = "Biomassa despescada", Sedimento = "Sedimento",
+  Gases_liquido = "Gases (líquido)", Agua_saida = "Água de saída",
+  Nao_contab_pct = "Não contabilizado (%)", Entrada_Saida = "Entrada − Saída",
+  Tilapia_desp = "Tilápia despescada", Total_entradas = "Total de entradas",
+  Ganho_liquido = "Ganho líquido biomassa", Retencao_pct = "Retenção da ração (%)"
+)
+variaveis <- names(rotulos)
+alfa <- 0.05
+dir.create("graficos", showWarnings = FALSE)
+
+# ---------------- Loop: ANOVA + pressupostos + Tukey ----------------
+tab_anova <- list(); tab_letras <- list()
+
+for (v in variaveis) {
+  f   <- as.formula(paste(v, "~ Tratamento"))
+  mod <- aov(f, data = dados)
+  s   <- summary(mod)[[1]]
+  
+  cat("\n=====================", rotulos[v], "=====================\n")
+  print(s)
+  sw  <- shapiro.test(residuals(mod))
+  lev <- leveneTest(f, data = dados, center = median)
+  cat(sprintf("Shapiro-Wilk (resíduos): p = %.3f | Levene: p = %.3f\n",
+              sw$p.value, lev$`Pr(>F)`[1]))
+  
+  tk <- TukeyHSD(mod, conf.level = 1 - alfa)
+  print(tk)
+  
+  # Letras de agrupamento (Tukey)
+  hsd <- HSD.test(mod, "Tratamento", alpha = alfa, group = TRUE)
+  let <- data.frame(Tratamento = rownames(hsd$groups),
+                    letra = as.character(hsd$groups$groups))
+  
+  tab_anova[[v]] <- data.frame(
+    Variavel = rotulos[v], F = s$`F value`[1], p = s$`Pr(>F)`[1],
+    CV = sqrt(s$`Mean Sq`[2]) / abs(mean(dados[[v]])) * 100,
+    Shapiro_p = sw$p.value, Levene_p = lev$`Pr(>F)`[1])
+  
+  resumo <- dados %>% group_by(Tratamento) %>%
+    summarise(media = mean(.data[[v]]), ep = sd(.data[[v]]) / sqrt(n()),
+              .groups = "drop") %>%
+    left_join(let, by = "Tratamento") %>% mutate(Variavel = rotulos[v])
+  tab_letras[[v]] <- resumo
+  
+  # Gráfico 1: média ± EP com letras de Tukey
+  amp <- diff(range(c(resumo$media - resumo$ep, resumo$media + resumo$ep, 0)))
+  g1 <- ggplot(resumo, aes(Tratamento, media, fill = Tratamento)) +
+    geom_col(width = 0.6, colour = "black") +
+    geom_errorbar(aes(ymin = media - ep, ymax = media + ep), width = 0.15) +
+    geom_jitter(data = dados, aes(Tratamento, .data[[v]]), inherit.aes = FALSE,
+                width = 0.08, size = 2, shape = 21, fill = "white") +
+    geom_text(aes(y = pmax(media + ep, media) + 0.06 * amp, label = letra),
+              size = 5, fontface = "bold") +
+    scale_fill_brewer(palette = "Set2") +
+    labs(title = rotulos[v],
+         subtitle = sprintf("ANOVA: F = %.2f; p = %.3f | Tukey (α = %.2f)",
+                            s$`F value`[1], s$`Pr(>F)`[1], alfa),
+         x = NULL,
+         y = ifelse(grepl("pct", v), "%", expression(kg~C~ha^-1~ciclo^-1))) +
+    theme_classic(base_size = 13) + theme(legend.position = "none")
+  ggsave(file.path("graficos", paste0(v, "_barras_tukey.png")),
+         g1, width = 6, height = 4.5, dpi = 300)
+  
+  # Gráfico 2: intervalos de confiança do Tukey
+  ci <- as.data.frame(tk$Tratamento); ci$Comparacao <- rownames(ci)
+  g2 <- ggplot(ci, aes(diff, reorder(Comparacao, diff), colour = `p adj` < alfa)) +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    geom_errorbarh(aes(xmin = lwr, xmax = upr), height = 0.2) +
+    geom_point(size = 3) +
+    scale_colour_manual(values = c(`FALSE` = "grey40", `TRUE` = "red3"),
+                        labels = c("n.s.", "p < 0.05"), name = NULL) +
+    labs(title = paste("Tukey HSD –", rotulos[v]),
+         x = "Diferença entre médias (IC 95%)", y = NULL) +
+    theme_bw(base_size = 12)
+  ggsave(file.path("graficos", paste0(v, "_tukey_IC.png")),
+         g2, width = 6, height = 4, dpi = 300)
+  
+  # Gráfico 3: diagnóstico dos resíduos
+  png(file.path("graficos", paste0(v, "_residuos.png")),
+      width = 2000, height = 1000, res = 200)
+  par(mfrow = c(1, 2)); plot(mod, which = 1:2); par(mfrow = c(1, 1))
+  dev.off()
+}
+
+# ---------------- Tabelas-resumo ----------------
+resumo_anova <- bind_rows(tab_anova) %>%
+  mutate(Signif = ifelse(p < alfa, "Sim", "Não"))
+print(resumo_anova, digits = 3, row.names = FALSE)
+
+letras_wide <- bind_rows(tab_letras) %>%
+  mutate(txt = sprintf("%.1f ± %.1f %s", media, ep, letra)) %>%
+  select(Variavel, Tratamento, txt) %>%
+  pivot_wider(names_from = Tratamento, values_from = txt)
+print(letras_wide, n = Inf)
+write.csv2(resumo_anova, "resumo_anova.csv", row.names = FALSE)
+write.csv2(letras_wide,  "medias_letras_tukey.csv", row.names = FALSE)
+
+# ---------------- Painel com todas as variáveis ----------------
+painel <- bind_rows(tab_letras) %>%
+  mutate(Variavel = factor(Variavel, levels = rotulos))
+gp <- ggplot(painel, aes(Tratamento, media, fill = Tratamento)) +
+  geom_col(colour = "black", width = 0.65) +
+  geom_errorbar(aes(ymin = media - ep, ymax = media + ep), width = 0.15) +
+  geom_text(aes(y = media + ep, label = letra), vjust = -0.5, fontface = "bold") +
+  facet_wrap(~ Variavel, scales = "free_y", ncol = 4) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.18))) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(x = NULL, y = "Média ± EP",
+       caption = "Letras iguais = sem diferença pelo teste de Tukey (α = 0,05)") +
+  theme_bw(base_size = 11) + theme(legend.position = "none")
+ggsave("graficos/painel_todas_variaveis.png", gp, width = 13, height = 9, dpi = 300)
