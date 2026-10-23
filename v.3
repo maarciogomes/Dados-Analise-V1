@@ -1,0 +1,180 @@
+# ============================================================
+# Reprodução dos gráficos da aba "Gráficos" (Excel) em R
+# ============================================================
+pacotes <- c("ggplot2", "dplyr", "tidyr", "scales", "patchwork", "agricolae")
+novos <- pacotes[!pacotes %in% installed.packages()[, "Package"]]
+if (length(novos)) install.packages(novos)
+invisible(lapply(pacotes, library, character.only = TRUE))
+
+mostrar_tukey <- FALSE          # TRUE = adiciona letras de Tukey nos boxplots
+dir.create("graficos", showWarnings = FALSE)
+
+# ---------------- Dados por viveiro (aba ANOVA) ----------------
+dados <- data.frame(
+  Tratamento = factor(rep(c("TP", "TM", "TC", "TPC"), each = 3),
+                      levels = c("TP", "TM", "TC", "TPC")),
+  Viveiro = c(7, 11, 16, 9, 13, 18, 14, 15, 17, 8, 10, 12),
+  Racao          = c(11581.32, 11238.89, 11489.61, 11530.44, 10674.66, 12690.11,
+                     10211.89, 10272.62, 10762.97, 11416.11, 10864.02, 11314.46),
+  Biomassa_desp  = c(6271.06, 6538.32, 5124.98, 5343.12, 5279.02, 5669.79,
+                     4627.15, 4314.50, 5792.49, 5924.19, 5121.23, 5220.81),
+  Tilapia_desp   = c(5812.75, 6210.27, 5047.38, 5343.12, 5279.02, 5669.79,
+                     3905.22, 3864.31, 5228.34, 4777.84, 4472.46, 4486.07),
+  Sedimento      = c(2167.33, 2042.31, 1530.16, 2044.75, 1866.08, 1464.72,
+                     2079.23, 1780.10, 1601.24, 1790.91, 1632.23, 1508.59),
+  Gases_liquido  = c(813.23, 960.19, 448.25, 184.30, -78.07, 1079.65,
+                     115.27, 1869.58, 1014.82, -360.20, 1329.18, -115.99),
+  Agua_saida     = c(177.36, 128.80, 163.88, 240.03, 145.47, 56.18,
+                     117.87, 69.55, 140.89, 154.39, 153.61, 79.37),
+  Nao_contab     = c(0.1977, 0.1492, 0.3754, 0.3303, 0.3309, 0.3546,
+                     0.3478, 0.2479, 0.2369, 0.3698, 0.2740, 0.4303),
+  Retencao       = c(0.5380, 0.5782, 0.4426, 0.4600, 0.4908, 0.4437,
+                     0.4168, 0.3839, 0.5037, 0.4864, 0.4372, 0.4286),
+  Total_entradas = c(11752.46, 11364.85, 11634.54, 11665.70, 10779.92, 12814.39,
+                     10640.00, 10681.79, 11203.38, 11915.22, 11344.98, 11748.26)
+)
+
+# ---------------- Estilo "Excel" ----------------
+cores_trat <- c(TP = "#2E75B6", TM = "#F47A20", TC = "#3BA33B", TPC = "#9E6BC7")
+num_br <- label_number(accuracy = 0.1, big.mark = ".", decimal.mark = ",")
+pct_br <- label_percent(accuracy = 0.1, big.mark = ".", decimal.mark = ",")
+
+tema_excel <- theme_minimal(base_size = 11) +
+  theme(plot.title = element_text(hjust = 0.5, colour = "grey30", size = 14),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor   = element_blank(),
+        panel.grid.major.y = element_line(colour = "grey85"),
+        axis.text  = element_text(colour = "grey35"),
+        axis.title = element_text(colour = "grey35", size = 9),
+        legend.position = "bottom", legend.title = element_blank())
+
+# ============================================================
+# 1) BOXPLOTS (8 gráficos)
+# ============================================================
+box_vars <- list(
+  Racao         = list("Ração",                 num_br),
+  Biomassa_desp = list("Biomassa despescada",   num_br),
+  Tilapia_desp  = list("Tilápia despescada",    num_br),
+  Sedimento     = list("Sedimento",             num_br),
+  Gases_liquido = list("Gases (líquido)",       num_br),
+  Agua_saida    = list("Água de saída",         num_br),
+  Nao_contab    = list("Não contabilizado (%)", pct_br),
+  Retencao      = list("Retenção da ração (%)", pct_br)
+)
+
+grafico_box <- function(v) {
+  titulo <- box_vars[[v]][[1]]; fmt <- box_vars[[v]][[2]]
+  g <- ggplot(dados, aes(x = Tratamento, y = .data[[v]], fill = Tratamento,
+                         colour = Tratamento)) +
+    stat_boxplot(geom = "errorbar", width = 0.25) +              # bigodes
+    geom_boxplot(width = 0.8, colour = "grey30", alpha = 0.9,
+                 outlier.shape = NA) +                           # quartis = QUARTIL.INC
+    stat_summary(fun = mean, geom = "point", shape = 4, size = 3,
+                 stroke = 1, colour = "grey30") +                # × = média
+    scale_fill_manual(values = cores_trat) +
+    scale_colour_manual(values = cores_trat) +
+    scale_y_continuous(labels = fmt,
+                       limits = c(min(0, min(dados[[v]])), NA),
+                       expand = expansion(mult = c(0, 0.1))) +
+    labs(title = titulo, x = NULL, y = NULL) +
+    tema_excel +
+    theme(axis.text.x = element_blank())
+  
+  if (mostrar_tukey) {
+    mod <- aov(as.formula(paste(v, "~ Tratamento")), data = dados)
+    hsd <- HSD.test(mod, "Tratamento", alpha = 0.05)$groups
+    let <- data.frame(Tratamento = factor(rownames(hsd), levels(dados$Tratamento)),
+                      letra = hsd$groups) %>%
+      left_join(dados %>% group_by(Tratamento) %>%
+                  summarise(y = max(.data[[v]])), by = "Tratamento")
+    g <- g + geom_text(data = let, aes(y = y, label = letra), vjust = -0.8,
+                       colour = "black", fontface = "bold", inherit.aes = FALSE,
+                       mapping = aes(x = Tratamento, y = y, label = letra))
+  }
+  g
+}
+
+boxes <- lapply(names(box_vars), grafico_box); names(boxes) <- names(box_vars)
+for (v in names(boxes))
+  ggsave(file.path("graficos", paste0("box_", v, ".png")), boxes[[v]],
+         width = 6, height = 4.2, dpi = 300, bg = "white")
+
+painel_box <- wrap_plots(boxes, ncol = 4, guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("graficos/painel_boxplots.png", painel_box,
+       width = 16, height = 8, dpi = 300, bg = "white")
+
+# ============================================================
+# 2) DESTINO DO CARBONO – colunas 100% empilhadas
+# ============================================================
+destino <- dados %>% group_by(Tratamento) %>%
+  summarise(Biomassa        = mean(Biomassa_desp) / mean(Total_entradas),
+            Sedimento       = mean(Sedimento)     / mean(Total_entradas),
+            Gases           = mean(Gases_liquido) / mean(Total_entradas),
+            `Água de saída` = mean(Agua_saida)    / mean(Total_entradas),
+            .groups = "drop") %>%
+  mutate(`Não contabilizado` = 1 - (Biomassa + Sedimento + Gases + `Água de saída`)) %>%
+  pivot_longer(-Tratamento, names_to = "Compartimento", values_to = "Prop") %>%
+  mutate(Compartimento = factor(Compartimento,
+                                levels = c("Não contabilizado", "Água de saída", "Gases",
+                                           "Sedimento", "Biomassa")))
+
+cores_dest <- c(Biomassa = "#4472C4", Sedimento = "#ED7D31", Gases = "#A5A5A5",
+                `Água de saída` = "#FFC000", `Não contabilizado` = "#5B9BD5")
+
+g_dest <- ggplot(destino, aes(Tratamento, Prop, fill = Compartimento)) +
+  geom_col(width = 0.4) +
+  geom_text(aes(label = percent(Prop, accuracy = 1)),
+            position = position_stack(vjust = 0.5), size = 3.3, colour = "grey20") +
+  scale_fill_manual(values = cores_dest) +
+  scale_y_continuous(labels = percent, breaks = seq(0, 1, 0.1),
+                     expand = c(0, 0)) +
+  labs(title = "Destino do carbono por tratamento (% das entradas)",
+       x = NULL, y = NULL) +
+  tema_excel + theme(legend.position = "right")
+ggsave("graficos/destino_carbono.png", g_dest,
+       width = 6.5, height = 5.8, dpi = 300, bg = "white")
+
+# ============================================================
+# 3) DISPERSÕES – pontos por tratamento + tendência linear (todos)
+# ============================================================
+grafico_disp <- function(x, y, xlab, ylab, fx, fy) {
+  ct <- cor.test(dados[[x]], dados[[y]])
+  ggplot(dados, aes(.data[[x]], .data[[y]])) +
+    geom_smooth(aes(linetype = "Linear (Todos)"), method = "lm", se = FALSE,
+                colour = "grey25", linewidth = 0.8, formula = y ~ x) +
+    geom_point(aes(colour = Tratamento), size = 3.2) +
+    scale_colour_manual(values = cores_trat) +
+    scale_linetype_manual(values = "solid") +
+    scale_x_continuous(labels = fx) +
+    scale_y_continuous(labels = fy, limits = c(0, NA),
+                       expand = expansion(mult = c(0, 0.05))) +
+    labs(title = paste(ylab, "×", xlab), x = xlab, y = ylab,
+         caption = sprintf("Pearson: r = %.3f; p = %.3f (n = 12)",
+                           ct$estimate, ct$p.value)) +
+    tema_excel +
+    theme(panel.grid.major.x = element_line(colour = "grey85"))
+}
+
+d1 <- grafico_disp("Gases_liquido", "Nao_contab", "Gases (líquido)",
+                   "Não contabilizado (%)", num_br, pct_br)
+d2 <- grafico_disp("Racao", "Biomassa_desp", "Ração",
+                   "Biomassa despescada", num_br, num_br)
+d3 <- grafico_disp("Sedimento", "Nao_contab", "Sedimento",
+                   "Não contabilizado (%)", num_br, pct_br)
+d4 <- grafico_disp("Racao", "Sedimento", "Ração",
+                   "Sedimento", num_br, num_br)
+
+disp <- list(naocontab_x_gases = d1, biomassa_x_racao = d2,
+             naocontab_x_sedimento = d3, sedimento_x_racao = d4)
+for (n in names(disp))
+  ggsave(file.path("graficos", paste0("disp_", n, ".png")), disp[[n]],
+         width = 6.5, height = 4.3, dpi = 300, bg = "white")
+
+painel_disp <- (d1 + d2) / (d3 + d4) + plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+ggsave("graficos/painel_dispersao.png", painel_disp,
+       width = 13, height = 9, dpi = 300, bg = "white")
+
+# ---------------- Visualizar ----------------
+print(painel_box); print(g_dest); print(painel_disp)
